@@ -8,6 +8,7 @@ import numpy as np
 
 from .brain import HaikuBrain, N_KC
 from .env import HaikuEnv
+from .generate import compose, save_weights
 
 
 def _save_png(path: Path, rgb: np.ndarray) -> None:
@@ -37,6 +38,8 @@ def train(
     env = HaikuEnv(poem)
     env.reset_glyph()
     brain = HaikuBrain(connectome=connectome, backend=backend)
+    if connectome and not brain.using_connectome:
+        raise SystemExit("haiku: MaleCNS pack missing — run python tools/pack_malecns.py")
     brain.encode_mora(0)
     out = out or Path("runs")
     scores: list[float] = []
@@ -87,8 +90,8 @@ def train(
         brain.encode_mora(env.i % N_KC)
         action = brain.step(0.016, odor=1.0, sugar=0.0, shock=0.0)
         reward, done = env.step(action)
+        brain.learn(action, reward)
         if done:
-            brain.reinforce(action, reward)
             window.append(reward)
             if len(window) > 40:
                 window.pop(0)
@@ -98,7 +101,8 @@ def train(
                 mean = scores[-1] if scores else 0.0
                 print(
                     f"t={t:5d}  {env.mora}  R={reward:+.3f}  mean40={mean:+.3f}  "
-                    f"spikes={brain.spikes_last}",
+                    f"spikes={brain.spikes_last}  kc_mbon_dw={brain.kc_mbon_dw:.4f}  "
+                    f"kc_mbon_n={brain.kc_mbon_updates}",
                     flush=True,
                 )
             env.advance_mora()
@@ -109,12 +113,23 @@ def train(
             tk_root.destroy()
         except Exception:
             pass
+    weights = out / "weights.npz"
+    save_weights(brain, weights)
+    generated = compose(brain, seed=steps)
+    gen_path = out / "generated.txt"
+    gen_path.write_text("\n".join(generated) + "\n", encoding="utf-8")
+    print("generated haiku:", flush=True)
+    print("\n".join(generated), flush=True)
     return {
         "poem": env.poem.lines,
         "steps": steps,
         "final_mean": scores[-1] if scores else 0.0,
         "connectome": brain.using_connectome,
         "backend": brain.lif_backend,
+        "kc_mbon_updates": brain.kc_mbon_updates,
+        "kc_mbon_dw": brain.kc_mbon_dw,
+        "generated": " / ".join(generated),
+        "weights": str(weights),
     }
 
 
@@ -122,15 +137,15 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description="MaleCNS / MB RL that writes Japanese haiku")
     p.add_argument("--poem", default="basho")
     p.add_argument("--steps", type=int, default=2500)
-    p.add_argument("--connectome", action="store_true")
+    p.add_argument("--connectome", action="store_true", help="MaleCNS (default)")
     p.add_argument("--connectome-cpu", action="store_true")
+    p.add_argument("--mb-only", action="store_true", help="8-channel loop, no MaleCNS")
     p.add_argument("--no-ui", action="store_true")
     args = p.parse_args(argv)
-    cns = args.connectome or args.connectome_cpu
-    backend = "cpu" if args.connectome_cpu or not args.connectome else "vulkan"
+    cns = not args.mb_only
     if args.connectome_cpu:
         backend = "cpu"
-    elif args.connectome:
+    else:
         backend = "vulkan"
     info = train(
         poem=args.poem,

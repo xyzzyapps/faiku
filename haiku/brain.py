@@ -15,7 +15,7 @@ def _exp(v: float, tau: float, dt: float) -> float:
 class HaikuBrain:
     """8 KC place/mora channels, PAM/PPL1 traces, 8×3 motor map."""
 
-    def __init__(self, connectome: bool = False, backend: str = "cpu") -> None:
+    def __init__(self, connectome: bool = True, backend: str = "vulkan") -> None:
         self.kc = np.zeros(N_KC, dtype=np.float32)
         self.mbon_avoid = np.ones(N_KC, dtype=np.float32)
         self.pam = 0.0
@@ -33,6 +33,9 @@ class HaikuBrain:
         self._net = None
         self._graph = None
         self._kc_edges: dict[int, np.ndarray] = {}
+        self._last_spiked = np.zeros(0, dtype=np.int32)
+        self.kc_mbon_updates = 0
+        self.kc_mbon_dw = 0.0
         if connectome:
             self._load_connectome(backend)
 
@@ -110,6 +113,7 @@ class HaikuBrain:
         if getattr(net, "device", None) is not None:
             steps = min(steps, 8)
         spiked = net.advance(steps)
+        self._last_spiked = spiked
         self.spikes_last = int(spiked.size)
         hit = np.zeros(gph.n, dtype=bool)
         if spiked.size:
@@ -126,28 +130,11 @@ class HaikuBrain:
         self.ppl1 = min(1.4, _exp(self.ppl1, 0.35, dt) + 0.90 * shock)
         eta_p = 0.12 * min(1.0, self.pam)
         eta_n = 0.10 * min(1.0, self.ppl1)
-        if spiked.size and self._kc_edges and (eta_p > 0.02 or eta_n > 0.02):
-            data = net.W.data
-            base = gph.weight0
-            for i in spiked.tolist():
-                edges = self._kc_edges.get(int(i))
-                if edges is None or len(edges) == 0:
-                    continue
-                ei = np.asarray(edges, dtype=np.int64)
-                if eta_p > 0.02:
-                    data[ei] *= 1.0 - eta_p
-                if eta_n > 0.02:
-                    data[ei] += eta_n * 0.08 * np.abs(base[ei])
-                lo = 0.05 * np.abs(base[ei])
-                hi = 1.6 * np.abs(base[ei])
-                mag = np.clip(np.abs(data[ei]), lo, hi)
-                data[ei] = mag * np.sign(base[ei] + 1e-12)
-                if hasattr(net, "update_weights"):
-                    net.update_weights(ei, data[ei])
+        self._touch_kc_mbon(eta_p, eta_n)
         for i in range(N_KC):
-            if self.kc[i] > 0.25 and eta_p > 0.02:
+            if self.kc[i] > 0.25 and eta_p > 1e-8:
                 self.mbon_avoid[i] *= 1.0 - eta_p * float(self.kc[i])
-            if self.kc[i] > 0.25 and eta_n > 0.02:
+            if self.kc[i] > 0.25 and eta_n > 1e-8:
                 self.mbon_avoid[i] = min(1.6, float(self.mbon_avoid[i]) + eta_n * 0.25 * float(self.kc[i]))
         avoid = float(np.dot(self.kc, self.mbon_avoid) / N_KC)
         self.valence = max(-1.0, min(1.0, 0.55 - avoid + 0.25 * self.pam - 0.35 * self.ppl1))
@@ -159,13 +146,68 @@ class HaikuBrain:
         act[0] += 0.15 * extra
         return np.tanh(act).astype(np.float32)
 
-    def reinforce(self, action: np.ndarray, reward: float) -> None:
-        """Three-factor: KC eligibility × motor action × dopamine (PAM+, PPL1−)."""
+    def _eligible_kc(self) -> np.ndarray:
+        gph = self._graph
+        if gph is None:
+            return np.zeros(0, dtype=np.int32)
+        kc = gph.groups.get("KC", np.zeros(0, np.uint32))
+        if kc.size == 0:
+            return np.zeros(0, dtype=np.int32)
+        chunk = max(1, kc.size // N_KC)
+        lo = self.channel * chunk
+        hi = min(kc.size, lo + chunk)
+        channel = kc[lo:hi].astype(np.int32, copy=False)
+        spiked = self._last_spiked
+        if spiked.size == 0:
+            return channel
+        hit = np.intersect1d(channel, spiked, assume_unique=False)
+        return hit if hit.size else channel
+
+    def _touch_kc_mbon(self, eta_p: float, eta_n: float) -> None:
+        """Hige-style PAM LTD / PPL1 LTP on KC→MBON CSR edges."""
+        net = self._net
+        gph = self._graph
+        if net is None or gph is None or not self._kc_edges:
+            return
+        if eta_p <= 1e-8 and eta_n <= 1e-8:
+            return
+        data = net.W.data
+        base = gph.weight0
+        dw = 0.0
+        n_up = 0
+        for i in self._eligible_kc().tolist():
+            edges = self._kc_edges.get(int(i))
+            if edges is None or len(edges) == 0:
+                continue
+            ei = np.asarray(edges, dtype=np.int64)
+            before = data[ei].copy()
+            if eta_p > 1e-8:
+                data[ei] *= 1.0 - eta_p
+            if eta_n > 1e-8:
+                data[ei] += eta_n * 0.08 * np.abs(base[ei])
+            lo = 0.05 * np.abs(base[ei])
+            hi = 1.6 * np.abs(base[ei])
+            mag = np.clip(np.abs(data[ei]), lo, hi)
+            data[ei] = mag * np.sign(base[ei] + 1e-12)
+            dw += float(np.abs(data[ei] - before).sum())
+            n_up += int(ei.size)
+            if hasattr(net, "update_weights"):
+                net.update_weights(ei, data[ei])
+        self.kc_mbon_updates += n_up
+        self.kc_mbon_dw += dw
+
+    def learn(self, action: np.ndarray, reward: float) -> None:
+        """Credit this tick: motor W and MaleCNS KC→MBON from the same dopamine."""
         r = float(reward)
         sugar = max(0.0, r)
         shock = max(0.0, -r)
-        self.pam = min(1.4, self.pam + 0.4 * sugar)
-        self.ppl1 = min(1.4, self.ppl1 + 0.4 * shock)
+        self.pam = min(1.4, self.pam + 0.55 * sugar)
+        self.ppl1 = min(1.4, self.ppl1 + 0.55 * shock)
         eta = 0.18 * r
         self.W += eta * np.outer(self.kc, np.tanh(action))
         self.W = np.clip(self.W, -1.5, 1.5)
+        if self.using_connectome:
+            self._touch_kc_mbon(0.12 * min(1.0, self.pam), 0.10 * min(1.0, self.ppl1))
+
+    def reinforce(self, action: np.ndarray, reward: float) -> None:
+        self.learn(action, reward)
