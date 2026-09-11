@@ -7,6 +7,14 @@ Supabase’s flycoding demo maps MaleCNS spikes onto legs that type. Other peopl
 This tree is **standalone**. Default brain is a fast 8-channel mushroom-body loop. Packed **MaleCNS v1.0** (166,700 LIF cells) is opt-in after you pack it **here**.
 
 ```text
+dusk on the glass
+a fly traces each letter
+ink of the old pond
+```
+
+`--poem glass`
+
+```text
 idea  →  mora as odor  →  KC sparse code  →  motor (dx, dy, pen)
 reward (ink vs glyph)  →  PAM if match / PPL1 if miss  →  KC→MBON + W_motor
 ```
@@ -46,9 +54,19 @@ Ink snapshots land in `runs/`.
 
 Classic 5–7–5 in hiragana (see `haiku/corpus.py`):
 
+Japanese (`--poem basho` and friends):
+
 - ふるいけや / かわずとびこむ / みずのおと
 - しずかさや / いわにしみいる / せみのこえ
 - なのはなや / つきはひがしに / ひはにしに
+
+English (`--poem glass`, `sugar`, `loom`, `wiring`, `pond`):
+
+- dusk on the glass / a fly traces each letter / ink of the old pond
+- sugar on the glass / the fly learns five seven five / autumn in the code
+- the cursor looms / wings blur a sudden takeoff / quiet on the pane
+- male wiring hums / Kenyon cells taste the mora / rain on the window
+- old pond waiting / a frog and a fly both jump / one sound, two ripples
 
 ## Credit
 

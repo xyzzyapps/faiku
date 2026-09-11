@@ -17,7 +17,13 @@ class Poem:
         return " / ".join(self.kana)
 
     def morae(self) -> list[str]:
-        return [ch for line in self.kana for ch in line]
+        chars = []
+        for line in self.kana:
+            for ch in line:
+                if ch.isspace() or ch in "—–-,.;:'\"":
+                    continue
+                chars.append(ch.lower() if "a" <= ch.lower() <= "z" else ch)
+        return chars
 
 
 POEMS: dict[str, Poem] = {
@@ -48,6 +54,41 @@ POEMS: dict[str, Poem] = {
         ("やせがえる", "まけるないつち", "おれとして"),
         ("yasegaeru", "makeru na icchi", "ore to shite"),
         "skinny frog, don't lose — Issa is here",
+    ),
+    "glass": Poem(
+        "glass",
+        "haiku",
+        ("dusk on the glass", "a fly traces each letter", "ink of the old pond"),
+        ("dusk on the glass", "a fly traces each letter", "ink of the old pond"),
+        "dusk on the glass / a fly traces each letter / ink of the old pond",
+    ),
+    "sugar": Poem(
+        "sugar",
+        "haiku",
+        ("sugar on the glass", "the fly learns five seven five", "autumn in the code"),
+        ("sugar on the glass", "the fly learns five seven five", "autumn in the code"),
+        "sugar on the glass / the fly learns five seven five / autumn in the code",
+    ),
+    "loom": Poem(
+        "loom",
+        "haiku",
+        ("the cursor looms", "wings blur a sudden takeoff", "quiet on the pane"),
+        ("the cursor looms", "wings blur a sudden takeoff", "quiet on the pane"),
+        "the cursor looms / wings blur a sudden takeoff / quiet on the pane",
+    ),
+    "wiring": Poem(
+        "wiring",
+        "haiku",
+        ("male wiring hums", "Kenyon cells taste the mora", "rain on the window"),
+        ("male wiring hums", "Kenyon cells taste the mora", "rain on the window"),
+        "male wiring hums / Kenyon cells taste the mora / rain on the window",
+    ),
+    "pond": Poem(
+        "pond",
+        "haiku",
+        ("old pond waiting", "a frog and a fly both jump", "one sound, two ripples"),
+        ("old pond waiting", "a frog and a fly both jump", "one sound, two ripples"),
+        "old pond waiting / a frog and a fly both jump / one sound, two ripples",
     ),
 }
 
