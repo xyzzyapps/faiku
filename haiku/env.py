@@ -32,9 +32,15 @@ class HaikuEnv:
         self.pen = False
         self.t = 0
 
-    def step(self, action: np.ndarray) -> tuple[float, bool]:
-        dx, dy, p = float(action[0]), float(action[1]), float(action[2])
-        self.pen = p > 0.05
+    def step(self, action) -> tuple[float, bool]:
+        from .pen import Stroke
+
+        if isinstance(action, Stroke):
+            dx, dy, down = action.dx, action.dy, action.down
+        else:
+            dx, dy = float(action[0]), float(action[1])
+            down = float(action[2]) > 0.05
+        self.pen = down
         nx = min(0.97, max(0.03, self.x + 0.06 * dx))
         ny = min(0.97, max(0.03, self.y + 0.06 * dy))
         if self.pen:

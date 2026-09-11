@@ -9,6 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import numpy as np
+
 from haiku.brain import HaikuBrain
 from haiku.fly import Fly
 from haiku.generate import load_weights
@@ -24,9 +26,9 @@ def kana_row_script(kana: str = "ふるいけや"):
     return gen
 
 
-def decode_chars(brain, action, cue, acc):
+def decode_chars(fly, action, cue, acc):
     acc.setdefault("chars", []).append(cue["char"])
-    acc.setdefault("pen", []).append(float(action[2]))
+    acc.setdefault("code", []).append(np.asarray(action).copy())
     return acc
 
 

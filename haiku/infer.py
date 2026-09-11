@@ -12,7 +12,7 @@ Hook points (all optional except decode):
 
 - script(fly) -> iterable of cues
 - encode(fly, cue, i)     default: fly.encode(mora)
-- forward(fly, cue)       default: fly.forward(...)
+- forward(fly, cue)       default: fly.forward(...) then fly.code
 - decode(fly, action, cue, acc)
 - after(fly, action, cue, acc)
 - finish(acc) -> result
@@ -86,7 +86,8 @@ def _default_forward(fly: Fly, cue: Cue) -> np.ndarray:
     dt = float(cue.get("dt", 0.016))
     sugar = float(cue.get("sugar", 0.0))
     shock = float(cue.get("shock", 0.0))
-    return fly.forward(dt=dt, odor=odor, sugar=sugar, shock=shock)
+    fly.forward(dt=dt, odor=odor, sugar=sugar, shock=shock)
+    return np.asarray(fly.code, dtype=np.float32)
 
 
 # --- built-in 5-7-5 word script ------------------------------------------------

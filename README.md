@@ -96,14 +96,20 @@ Ink snapshots and `runs/weights.npz` land in `runs/`.
 `infer(fly, script, hooks)` is the only loop. It calls a **`Fly`** ABC, not MaleCNS by name.
 
 ```python
-class Fly(ABC):
+class Fly(ABC):          # neurons only — no pen
     def encode(self, mora_index: int) -> None: ...
-    def forward(self, dt, odor, sugar, shock) -> np.ndarray: ...  # motor
+    def forward(self, dt, odor, sugar, shock) -> None: ...
     @property
-    def code(self) -> np.ndarray: ...  # KC-like readout
+    def code(self) -> np.ndarray: ...   # KC-like readout
+
+class PenClass(Fly):     # invented writing decoder
+    def stroke(self) -> Stroke: ...     # dx, dy, down — not MaleCNS
+
+class HaikuBrain(PenClass):
+    ...
 ```
 
-`HaikuBrain` is one `Fly` (MaleCNS or `--mb-only`). You can substitute another subclass. A **script generator** yields cues; **hooks** encode, step, decode, and finish.
+`infer()` calls **`Fly`**. Training the glyph canvas calls **`PenClass.stroke()`**. The 3-vector never lives on `Fly`.
 
 ```python
 from haiku.infer import Hooks, infer, infer_haiku
@@ -120,7 +126,7 @@ infer(fly, my_script, Hooks(
 ))
 ```
 
-Default hooks call `fly.encode` and `fly.forward`. Override those if the script needs a different odor map or several ticks per cue.
+Default hooks call `fly.encode` and `fly.forward` (neural tick; they return `fly.code`, not a pen). Override those if the script needs a different odor map or several ticks per cue.
 
 Hook points: `encode`, `forward`, `decode`, `after`, `halt`, `finish`.
 

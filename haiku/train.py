@@ -88,9 +88,10 @@ def train(
 
     for t in range(steps):
         brain.encode_mora(env.i % N_KC)
-        action = brain.step(0.016, odor=1.0, sugar=0.0, shock=0.0)
-        reward, done = env.step(action)
-        brain.learn(action, reward)
+        brain.forward(0.016, odor=1.0, sugar=0.0, shock=0.0)
+        stroke = brain.stroke()
+        reward, done = env.step(stroke)
+        brain.learn(stroke.vector(), reward)
         if done:
             window.append(reward)
             if len(window) > 40:

@@ -1,7 +1,6 @@
 """Abstract fly the inference loop calls.
 
-`infer()` only sees this surface. A MaleCNS mushroom body, the 8-channel
-stand-in, or a fake test double all implement the same three methods.
+Neural I/O only: odor in, a tick, a KC-like code. No writing tip.
 """
 from __future__ import annotations
 
@@ -11,7 +10,7 @@ import numpy as np
 
 
 class Fly(ABC):
-    """Sensory encode → one tick → a motor action and a KC-like code."""
+    """Sensory encode → one network tick → a population readout."""
 
     n_channels: int = 8
 
@@ -26,10 +25,10 @@ class Fly(ABC):
         odor: float = 1.0,
         sugar: float = 0.0,
         shock: float = 0.0,
-    ) -> np.ndarray:
-        """One step. Returns motor `(dx, dy, pen)` or a same-shaped stand-in."""
+    ) -> None:
+        """One neural step. Updates `code`. Does not return a pen."""
 
     @property
     @abstractmethod
     def code(self) -> np.ndarray:
-        """Readout used by decode hooks (Kenyon-cell rates, or equivalent)."""
+        """Kenyon-cell rates, or an equivalent readout. Not motor."""

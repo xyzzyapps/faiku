@@ -5,7 +5,7 @@ import math
 
 import numpy as np
 
-from .fly import Fly
+from .pen import PenClass, Stroke
 
 N_KC = 8
 
@@ -14,8 +14,8 @@ def _exp(v: float, tau: float, dt: float) -> float:
     return 0.0 if tau <= 1e-6 else v * math.exp(-dt / tau)
 
 
-class HaikuBrain(Fly):
-    """8 KC place/mora channels, PAM/PPL1 traces, 8×3 motor map."""
+class HaikuBrain(PenClass):
+    """MaleCNS / 8-channel MB, plus a PenClass stroke decoder."""
 
     n_channels = N_KC
 
@@ -40,6 +40,7 @@ class HaikuBrain(Fly):
         self._last_spiked = np.zeros(0, dtype=np.int32)
         self.kc_mbon_updates = 0
         self.kc_mbon_dw = 0.0
+        self._dn_bias = 0.0
         if connectome:
             self._load_connectome(backend)
 
@@ -85,19 +86,26 @@ class HaikuBrain(Fly):
         odor: float = 1.0,
         sugar: float = 0.0,
         shock: float = 0.0,
-    ) -> np.ndarray:
-        return self.step(dt, odor, sugar, shock)
+    ) -> None:
+        if self.using_connectome and self._net is not None:
+            self._step_cns(dt, odor, sugar, shock)
+        else:
+            self._step_mb(dt, odor, sugar, shock)
+
+    def step(self, dt: float, odor: float, sugar: float, shock: float) -> None:
+        self.forward(dt, odor, sugar, shock)
 
     @property
     def code(self) -> np.ndarray:
         return self.kc
 
-    def step(self, dt: float, odor: float, sugar: float, shock: float) -> np.ndarray:
-        if self.using_connectome and self._net is not None:
-            return self._step_cns(dt, odor, sugar, shock)
-        return self._step_mb(dt, odor, sugar, shock)
+    def stroke(self) -> Stroke:
+        act = np.tanh(self.kc @ self.W).astype(np.float32)
+        act[0] += 0.15 * self._dn_bias
+        act = np.tanh(act)
+        return Stroke(dx=float(act[0]), dy=float(act[1]), down=bool(act[2] > 0.05))
 
-    def _step_mb(self, dt: float, odor: float, sugar: float, shock: float) -> np.ndarray:
+    def _step_mb(self, dt: float, odor: float, sugar: float, shock: float) -> None:
         self.kc *= np.float32(math.exp(-dt / 0.18))
         self.kc[self.channel] = min(1.0, float(self.kc[self.channel]) + 0.55 * odor)
         self.pam = min(1.4, _exp(self.pam, 0.45, dt) + 0.9 * sugar)
@@ -112,10 +120,9 @@ class HaikuBrain(Fly):
             self.mbon_avoid[i] = min(1.6, max(0.05, float(self.mbon_avoid[i])))
         avoid = float(np.dot(self.kc, self.mbon_avoid) / N_KC)
         self.valence = max(-1.0, min(1.0, 0.55 - avoid + 0.25 * self.pam - 0.35 * self.ppl1))
-        act = self.kc @ self.W
-        return np.tanh(act).astype(np.float32)
+        self._dn_bias = 0.0
 
-    def _step_cns(self, dt: float, odor: float, sugar: float, shock: float) -> np.ndarray:
+    def _step_cns(self, dt: float, odor: float, sugar: float, shock: float) -> None:
         net = self._net
         gph = self._graph
         g = gph.groups
@@ -162,9 +169,7 @@ class HaikuBrain(Fly):
         extra = 0.0
         if dn.size:
             extra = float(hit[dn].mean()) * 2.0 - 0.2
-        act = self.kc @ self.W
-        act[0] += 0.15 * extra
-        return np.tanh(act).astype(np.float32)
+        self._dn_bias = extra
 
     def _eligible_kc(self) -> np.ndarray:
         gph = self._graph
@@ -224,7 +229,10 @@ class HaikuBrain(Fly):
         self.pam = min(1.4, self.pam + 0.55 * sugar)
         self.ppl1 = min(1.4, self.ppl1 + 0.55 * shock)
         eta = 0.18 * r
-        self.W += eta * np.outer(self.kc, np.tanh(action))
+        vec = np.tanh(np.asarray(action, dtype=np.float32).reshape(-1)[:3])
+        if vec.size < 3:
+            vec = self.stroke().vector()
+        self.W += eta * np.outer(self.kc, vec[:3])
         self.W = np.clip(self.W, -1.5, 1.5)
         if self.using_connectome:
             self._touch_kc_mbon(0.12 * min(1.0, self.pam), 0.10 * min(1.0, self.ppl1))

@@ -41,27 +41,68 @@ What is **not** happening: Kenyon cells storing Unicode. A letter is a **2-D pat
 
 | Layer | Flycoding | Fly font | Haiku (this repo) |
 |---|---|---|---|
-| Input | terminal / task cue | odor / light / walls | mora as odor on one KC channel |
-| Brain | MaleCNS LIF | walk circuit or tracker | 8-channel MB RL; MaleCNS optional (packed in this repo) |
-| Output | legs → keys | XY trail → Latin letter | XY + pen → hiragana |
-| Learning | usually none / scripted | usually none | PAM if ink matches glyph, PPL1 if miss |
+| Neural input | engineered currents on labeled cells | odor / light / walls (or none) | mora → KC slice; sugar → PAM/LB3c; shock → PPL1 |
+| Neural output | who spiked (then a body decoder) | walk XY or MN/DN rates | who spiked, collapsed to 8 KC rates (`Fly.code`) |
+| Extra decoder | legs → virtual keyboard | polyline → letter | `PenClass.stroke()` → paper; word hook → 5–7–5 |
+| Learning | usually none / scripted | usually none | PAM LTD / PPL1 LTP on KC→MBON; `W` on the pen only |
 
-### Haiku RL loop
-
-This repo points a Hige-style mushroom-body law at Japanese 5–7–5 (fly-font kana, not Latin):
+### Classes: `Fly` vs `PenClass`
 
 ```text
-mora as odor → KC sparse code → motor (dx, dy, pen)
-reward (ink vs glyph) → PAM if match / PPL1 if miss → KC→MBON + W_motor
+Fly            encode / forward / code     neurons only — no writing tip
+  PenClass     stroke() → Stroke           invented decoder onto paper
+    HaikuBrain
 ```
 
-- Default: fast 8-channel MB loop in `haiku/brain.py`.
-- Opt-in: `python tools/pack_malecns.py` then `--connectome`; PAM/PPL1/KC injections; Hige-style **PAM LTD / PPL1 LTP** on KC→MBON.
-- Motor: KC rates × a learned 8×3 map; three-factor `W += reward * outer(KC, action)`.
-- Corpus: classic 5–7–5 in hiragana (Bashō, Buson, Issa). Glyphs are fly-font polylines rasterized to a small ink grid.
-- LIF, packer, and CSR loader all live in this tree (`haiku/lif.py`, `tools/pack_malecns.py`, `haiku/connectome.py`).
+`infer()` talks to **`Fly`**. The glyph canvas talks to **`PenClass.stroke()`**. MaleCNS never sees a pen.
 
-This is **not** a reconstructed fly mind and **not** a claim that fruit flies compose Bashō. It is dopamine-gated plasticity on a real or reduced mushroom body, trained on stroke overlap.
+### Neural network input (actual)
+
+Default run is packed **MaleCNS v1.0**: 166,700 Shiu LIF cells, ~25.6M directed edges (`haiku/lif.py`, `connectome.py`). `--mb-only` skips the graph.
+
+Each `Fly.forward(dt, odor, sugar, shock)` tick, after `encode(mora_index)`:
+
+| Knob | Into MaleCNS | Into `--mb-only` |
+|---|---|---|
+| `mora_index` | which eighth of **KC** gets current | which of 8 floats is the odor bin |
+| `odor` | `inject(KC[lo:hi], 7.5 * (0.2 + 0.8 * odor))` | add to `kc[channel]` |
+| `sugar` | **PAM** (11 nA-scale) and sugar GRN **LB3c** (10) | PAM trace |
+| `shock` | **PPL1** (11.3) | PPL1 trace |
+| `dt` | 4–8 × 1 ms LIF steps | exponential decay on the 8 floats |
+
+The graph does **not** take Unicode, 5–7–5, or pixels. Mora is just “which KC bin.”
+
+### Neural network output (actual)
+
+MaleCNS output is a **spike index list** (who fired). In the animal you would read identified **DNs / MNs** (walk, turn, jump, proboscis). This repo does **not** expose a full motor-neuron head.
+
+What `Fly` exposes:
+
+- **`code`**: 8 numbers. Each is the mean spike rate of one KC eighth (smoothed). `--mb-only`: the 8 floats themselves.
+- Spikes also drive Hige-like **KC→MBON** weight changes when PAM/PPL1 are up.
+- Mean **DN** spike rate is stored as `_dn_bias` for the pen only (mixed into `dx`). It is not a walk controller.
+
+`Fly.forward()` returns **nothing**. No `(dx, dy, pen)` on this class.
+
+### Pen (`PenClass`, not the network)
+
+`Stroke(dx, dy, down)` is a **canvas command we invented**. The connectome has no stylus.
+
+`HaikuBrain.stroke()`:
+
+```text
+v = tanh(code @ W)     # W is 8×3, learned, not in MaleCNS
+v.dx += 0.15 * DN_bias
+Stroke(dx, dy, down = v[2] > 0.05)
+```
+
+The writing env steps the tip by `dx, dy` and lays ink if `down`. Reward is **glyph overlap**, not “is this a haiku.” That scalar becomes `sugar` / `shock` on the **next** neural tick. The stroke does not feed back as JO or tarsal touch.
+
+`W` is updated with `W += reward * outer(code, tanh(stroke))`. That is pen learning. Graph learning is PAM LTD / PPL1 LTP on KC→MBON synapses only.
+
+Word-bank 5–7–5 (`infer` decode hook) reads **`Fly.code`**, not `Stroke`. The fly does not compose Bashō.
+
+This is **not** a reconstructed fly mind. It is Shiu LIF on measured wiring (or eight floats), plus an engineered pen.
 
 ### Related Grok-Bot trading clips (same week, not fly)
 
