@@ -5,6 +5,8 @@ import math
 
 import numpy as np
 
+from .fly import Fly
+
 N_KC = 8
 
 
@@ -12,8 +14,10 @@ def _exp(v: float, tau: float, dt: float) -> float:
     return 0.0 if tau <= 1e-6 else v * math.exp(-dt / tau)
 
 
-class HaikuBrain:
+class HaikuBrain(Fly):
     """8 KC place/mora channels, PAM/PPL1 traces, 8×3 motor map."""
+
+    n_channels = N_KC
 
     def __init__(self, connectome: bool = True, backend: str = "vulkan") -> None:
         self.kc = np.zeros(N_KC, dtype=np.float32)
@@ -69,8 +73,24 @@ class HaikuBrain:
             buckets.setdefault(int(pre), []).append(int(g.kc_mbon_edge[e]))
         self._kc_edges = {k: np.asarray(v, dtype=np.int64) for k, v in buckets.items()}
 
+    def encode(self, mora_index: int) -> None:
+        self.channel = int(mora_index) % self.n_channels
+
     def encode_mora(self, mora_index: int) -> None:
-        self.channel = int(mora_index) % N_KC
+        self.encode(mora_index)
+
+    def forward(
+        self,
+        dt: float = 0.016,
+        odor: float = 1.0,
+        sugar: float = 0.0,
+        shock: float = 0.0,
+    ) -> np.ndarray:
+        return self.step(dt, odor, sugar, shock)
+
+    @property
+    def code(self) -> np.ndarray:
+        return self.kc
 
     def step(self, dt: float, odor: float, sugar: float, shock: float) -> np.ndarray:
         if self.using_connectome and self._net is not None:

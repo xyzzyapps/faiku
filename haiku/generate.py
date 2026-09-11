@@ -32,8 +32,9 @@ def _syllables(word: str) -> int:
     return max(1, n)
 
 
-def _pick(brain: HaikuBrain, rng: np.random.Generator, bank: int) -> str:
-    kc = np.clip(brain.kc, 0, None)
+def _pick(fly, rng: np.random.Generator, bank: int) -> str:
+    raw = fly.code if hasattr(fly, "code") else fly.kc
+    kc = np.clip(np.asarray(raw), 0, None)
     if float(kc.sum()) < 1e-6:
         kc = np.ones(N_KC, dtype=np.float32)
     p = kc / float(kc.sum())
@@ -45,34 +46,13 @@ def _pick(brain: HaikuBrain, rng: np.random.Generator, bank: int) -> str:
 
 
 def compose(brain: HaikuBrain, seed: int = 0) -> tuple[str, str, str]:
-    rng = np.random.default_rng(seed)
-    lines: list[str] = []
-    for need, banks in ((5, (0, 3, 1, 6, 7)), (7, (2, 0, 3, 1, 4, 6, 7)), (5, (5, 2, 3, 6, 0))):
-        words: list[str] = []
-        n = 0
-        k = 0
-        while n < need:
-            brain.encode_mora(k % N_KC)
-            act = brain.step(0.016, odor=1.0, sugar=0.0, shock=0.0)
-            brain.learn(act, float(brain.valence) * 0.05)
-            remain = need - n
-            if remain == 1:
-                w = WORDS[3][int(np.argmax(brain.kc))]
-            else:
-                w = _pick(brain, rng, banks[k % len(banks)])
-            s = _syllables(w)
-            if s > remain:
-                w = WORDS[3][int(np.argmax(brain.kc))]
-                s = _syllables(w)
-            if s > remain:
-                break
-            words.append(w)
-            n += s
-            k += 1
-            if k > 24:
-                break
-        lines.append(" ".join(words))
-    return lines[0], lines[1], lines[2]
+    from .infer import infer_haiku
+
+    text = infer_haiku(brain, seed=seed)
+    parts = [p.strip() for p in text.split(" / ")]
+    while len(parts) < 3:
+        parts.append("")
+    return parts[0], parts[1], parts[2]
 
 
 def save_weights(brain: HaikuBrain, path: Path) -> None:

@@ -91,6 +91,44 @@ python -m haiku --poem glass
 
 Ink snapshots and `runs/weights.npz` land in `runs/`.
 
+## Inference: abstract `Fly` + hooks
+
+`infer(fly, script, hooks)` is the only loop. It calls a **`Fly`** ABC, not MaleCNS by name.
+
+```python
+class Fly(ABC):
+    def encode(self, mora_index: int) -> None: ...
+    def forward(self, dt, odor, sugar, shock) -> np.ndarray: ...  # motor
+    @property
+    def code(self) -> np.ndarray: ...  # KC-like readout
+```
+
+`HaikuBrain` is one `Fly` (MaleCNS or `--mb-only`). You can substitute another subclass. A **script generator** yields cues; **hooks** encode, step, decode, and finish.
+
+```python
+from haiku.infer import Hooks, infer, infer_haiku
+
+infer_haiku(fly, seed=0)
+
+def my_script(fly):
+    for i, ch in enumerate("ふるいけや"):
+        yield {"mora": i, "char": ch, "odor": 1.0}
+
+infer(fly, my_script, Hooks(
+    decode=lambda fly, action, cue, acc: (acc.setdefault("out", []).append(cue["char"]) or acc),
+    finish=lambda acc: "".join(acc.get("out") or []),
+))
+```
+
+Default hooks call `fly.encode` and `fly.forward`. Override those if the script needs a different odor map or several ticks per cue.
+
+Hook points: `encode`, `forward`, `decode`, `after`, `halt`, `finish`.
+
+```powershell
+python -m haiku.infer --weights runs/weights.npz --mb-only
+python examples/custom_script.py --mb-only
+```
+
 ## Poems
 
 Classic 5–7–5 in hiragana (see `haiku/corpus.py`):
