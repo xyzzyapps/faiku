@@ -5,9 +5,9 @@ import math
 
 import numpy as np
 
-from .pen import PenClass, Stroke
-
-N_KC = 8
+from .channels import N_CHANNELS, N_KC, N_VISION, layout
+from .pen import PenClass
+from .vision import VisionMLP
 
 
 def _exp(v: float, tau: float, dt: float) -> float:
@@ -17,17 +17,27 @@ def _exp(v: float, tau: float, dt: float) -> float:
 class HaikuBrain(PenClass):
     """MaleCNS / 8-channel MB, plus a PenClass stroke decoder."""
 
-    n_channels = N_KC
+    n_channels = N_CHANNELS
 
-    def __init__(self, connectome: bool = True, backend: str = "vulkan") -> None:
-        self.kc = np.zeros(N_KC, dtype=np.float32)
-        self.mbon_avoid = np.ones(N_KC, dtype=np.float32)
+    def __init__(
+        self,
+        connectome: bool = True,
+        backend: str = "vulkan",
+        vision: bool = True,
+    ) -> None:
+        self.use_vision = bool(vision)
+        self.n_odor, self.n_vis, n = layout(self.use_vision)
+        self.n_channels = n
+        self.kc = np.zeros(n, dtype=np.float32)
+        self.mbon_avoid = np.ones(n, dtype=np.float32)
         self.pam = 0.0
         self.ppl1 = 0.0
         self.valence = 0.0
-        self.W = np.zeros((N_KC, 3), dtype=np.float32)
-        rng = np.random.default_rng(7)
-        self.W[:] = rng.normal(0, 0.08, self.W.shape).astype(np.float32)
+        self.init_pen(n)
+        self.vision = VisionMLP(N_VISION) if self.use_vision else None
+        self._vis = np.zeros(max(self.n_vis, 1), dtype=np.float32)
+        if not self.use_vision:
+            self._vis = np.zeros(0, dtype=np.float32)
         self.channel = 0
         self.using_connectome = False
         self.lif_backend = "off"
@@ -63,7 +73,11 @@ class HaikuBrain(PenClass):
         self.n_neurons = graph.n
         self.n_edges = graph.n_edges
         self._index_kc_edges()
-        print(f"haiku: MaleCNS LIF {self.lif_backend}  n={graph.n}  edges={graph.n_edges}", flush=True)
+        mode = "4 odor + 4 vision" if self.use_vision else "8 odor (no vision)"
+        print(
+            f"haiku: MaleCNS LIF {self.lif_backend}  n={graph.n}  edges={graph.n_edges}  {mode}",
+            flush=True,
+        )
 
     def _index_kc_edges(self) -> None:
         g = self._graph
@@ -75,7 +89,13 @@ class HaikuBrain(PenClass):
         self._kc_edges = {k: np.asarray(v, dtype=np.int64) for k, v in buckets.items()}
 
     def encode(self, mora_index: int) -> None:
-        self.channel = int(mora_index) % self.n_channels
+        self.channel = int(mora_index) % max(1, self.n_odor)
+
+    def see(self, frame: np.ndarray) -> None:
+        if not self.use_vision or self.vision is None:
+            return
+        self._vis = self.vision(frame)
+        self.kc[self.n_odor :] = self._vis
 
     def encode_mora(self, mora_index: int) -> None:
         self.encode(mora_index)
@@ -99,26 +119,23 @@ class HaikuBrain(PenClass):
     def code(self) -> np.ndarray:
         return self.kc
 
-    def stroke(self) -> Stroke:
-        act = np.tanh(self.kc @ self.W).astype(np.float32)
-        act[0] += 0.15 * self._dn_bias
-        act = np.tanh(act)
-        return Stroke(dx=float(act[0]), dy=float(act[1]), down=bool(act[2] > 0.05))
-
     def _step_mb(self, dt: float, odor: float, sugar: float, shock: float) -> None:
-        self.kc *= np.float32(math.exp(-dt / 0.18))
+        self.kc[: self.n_odor] *= np.float32(math.exp(-dt / 0.18))
         self.kc[self.channel] = min(1.0, float(self.kc[self.channel]) + 0.55 * odor)
+        if self.use_vision and self.n_vis:
+            self.kc[self.n_odor :] = 0.7 * self.kc[self.n_odor :] + 0.3 * self._vis
         self.pam = min(1.4, _exp(self.pam, 0.45, dt) + 0.9 * sugar)
         self.ppl1 = min(1.4, _exp(self.ppl1, 0.35, dt) + 0.9 * shock)
         eta_p = 0.12 * min(1.0, self.pam)
         eta_n = 0.10 * min(1.0, self.ppl1)
-        for i in range(N_KC):
+        n = self.n_channels
+        for i in range(n):
             if self.kc[i] > 0.2 and eta_p > 0.02:
                 self.mbon_avoid[i] *= 1.0 - eta_p * float(self.kc[i])
             if self.kc[i] > 0.2 and eta_n > 0.02:
                 self.mbon_avoid[i] = min(1.6, float(self.mbon_avoid[i]) + eta_n * 0.25 * float(self.kc[i]))
             self.mbon_avoid[i] = min(1.6, max(0.05, float(self.mbon_avoid[i])))
-        avoid = float(np.dot(self.kc, self.mbon_avoid) / N_KC)
+        avoid = float(np.dot(self.kc, self.mbon_avoid) / n)
         self.valence = max(-1.0, min(1.0, 0.55 - avoid + 0.25 * self.pam - 0.35 * self.ppl1))
         self._dn_bias = 0.0
 
@@ -132,10 +149,21 @@ class HaikuBrain(PenClass):
         net.inject(g.get("PPL1", np.zeros(0, np.uint32)), 11.3 * shock)
         kc = g.get("KC", np.zeros(0, np.uint32))
         if kc.size:
-            chunk = max(1, kc.size // N_KC)
-            lo = self.channel * chunk
-            hi = min(kc.size, lo + chunk)
-            net.inject(kc[lo:hi], 7.5 * (0.2 + 0.8 * odor))
+            if self.use_vision:
+                mid = kc.size // 2
+                odor_kc, vis_kc = kc[:mid], kc[mid:]
+                oc = max(1, odor_kc.size // self.n_odor)
+                lo, hi = self.channel * oc, min(odor_kc.size, (self.channel + 1) * oc)
+                net.inject(odor_kc[lo:hi], 7.5 * (0.2 + 0.8 * odor))
+                vc = max(1, vis_kc.size // max(1, self.n_vis))
+                for i, amp in enumerate(self._vis.tolist()):
+                    a, b = i * vc, min(vis_kc.size, (i + 1) * vc)
+                    net.inject(vis_kc[a:b], 7.5 * float(amp))
+            else:
+                chunk = max(1, kc.size // self.n_odor)
+                lo = self.channel * chunk
+                hi = min(kc.size, lo + chunk)
+                net.inject(kc[lo:hi], 7.5 * (0.2 + 0.8 * odor))
         steps = max(4, min(12, int(round(dt / 0.001))))
         if getattr(net, "device", None) is not None:
             steps = min(steps, 8)
@@ -145,25 +173,40 @@ class HaikuBrain(PenClass):
         hit = np.zeros(gph.n, dtype=bool)
         if spiked.size:
             hit[spiked] = True
-        for i in range(N_KC):
-            if kc.size:
-                chunk = max(1, kc.size // N_KC)
-                part = kc[i * chunk : min(kc.size, (i + 1) * chunk)]
-                rate = float(hit[part].mean()) if part.size else 0.0
+        if kc.size:
+            if self.use_vision:
+                mid = kc.size // 2
+                odor_kc, vis_kc = kc[:mid], kc[mid:]
+                oc = max(1, odor_kc.size // self.n_odor)
+                vc = max(1, vis_kc.size // max(1, self.n_vis))
+                for i in range(self.n_odor):
+                    part = odor_kc[i * oc : min(odor_kc.size, (i + 1) * oc)]
+                    rate = float(hit[part].mean()) if part.size else 0.0
+                    self.kc[i] = 0.7 * float(self.kc[i]) + 0.3 * min(1.0, rate * 8)
+                for i in range(self.n_vis):
+                    part = vis_kc[i * vc : min(vis_kc.size, (i + 1) * vc)]
+                    rate = float(hit[part].mean()) if part.size else 0.0
+                    j = self.n_odor + i
+                    self.kc[j] = 0.7 * float(self.kc[j]) + 0.3 * min(1.0, rate * 8)
+                self.kc[self.n_odor :] = 0.6 * self.kc[self.n_odor :] + 0.4 * self._vis
             else:
-                rate = 0.0
-            self.kc[i] = 0.7 * float(self.kc[i]) + 0.3 * min(1.0, rate * 8)
+                chunk = max(1, kc.size // self.n_odor)
+                for i in range(self.n_odor):
+                    part = kc[i * chunk : min(kc.size, (i + 1) * chunk)]
+                    rate = float(hit[part].mean()) if part.size else 0.0
+                    self.kc[i] = 0.7 * float(self.kc[i]) + 0.3 * min(1.0, rate * 8)
         self.pam = min(1.4, _exp(self.pam, 0.45, dt) + 0.85 * sugar)
         self.ppl1 = min(1.4, _exp(self.ppl1, 0.35, dt) + 0.90 * shock)
         eta_p = 0.12 * min(1.0, self.pam)
         eta_n = 0.10 * min(1.0, self.ppl1)
         self._touch_kc_mbon(eta_p, eta_n)
-        for i in range(N_KC):
+        n = self.n_channels
+        for i in range(n):
             if self.kc[i] > 0.25 and eta_p > 1e-8:
                 self.mbon_avoid[i] *= 1.0 - eta_p * float(self.kc[i])
             if self.kc[i] > 0.25 and eta_n > 1e-8:
                 self.mbon_avoid[i] = min(1.6, float(self.mbon_avoid[i]) + eta_n * 0.25 * float(self.kc[i]))
-        avoid = float(np.dot(self.kc, self.mbon_avoid) / N_KC)
+        avoid = float(np.dot(self.kc, self.mbon_avoid) / n)
         self.valence = max(-1.0, min(1.0, 0.55 - avoid + 0.25 * self.pam - 0.35 * self.ppl1))
         dn = g.get("DN", np.zeros(0, np.uint32))
         extra = 0.0
@@ -178,10 +221,21 @@ class HaikuBrain(PenClass):
         kc = gph.groups.get("KC", np.zeros(0, np.uint32))
         if kc.size == 0:
             return np.zeros(0, dtype=np.int32)
-        chunk = max(1, kc.size // N_KC)
-        lo = self.channel * chunk
-        hi = min(kc.size, lo + chunk)
-        channel = kc[lo:hi].astype(np.int32, copy=False)
+        if self.use_vision:
+            mid = kc.size // 2
+            odor_kc = kc[:mid]
+            oc = max(1, odor_kc.size // self.n_odor)
+            lo = self.channel * oc
+            hi = min(odor_kc.size, (self.channel + 1) * oc)
+            channel = odor_kc[lo:hi]
+            if self._vis.size and float(np.max(np.abs(self._vis))) > 0.05:
+                channel = np.concatenate([channel, kc[mid:]])
+        else:
+            chunk = max(1, kc.size // self.n_odor)
+            lo = self.channel * chunk
+            hi = min(kc.size, lo + chunk)
+            channel = kc[lo:hi]
+        channel = channel.astype(np.int32, copy=False)
         spiked = self._last_spiked
         if spiked.size == 0:
             return channel
@@ -228,12 +282,9 @@ class HaikuBrain(PenClass):
         shock = max(0.0, -r)
         self.pam = min(1.4, self.pam + 0.55 * sugar)
         self.ppl1 = min(1.4, self.ppl1 + 0.55 * shock)
-        eta = 0.18 * r
-        vec = np.tanh(np.asarray(action, dtype=np.float32).reshape(-1)[:3])
-        if vec.size < 3:
-            vec = self.stroke().vector()
-        self.W += eta * np.outer(self.kc, vec[:3])
-        self.W = np.clip(self.W, -1.5, 1.5)
+        self.learn_pen(action, r)
+        if self.vision is not None:
+            self.vision.reinforce(r)
         if self.using_connectome:
             self._touch_kc_mbon(0.12 * min(1.0, self.pam), 0.10 * min(1.0, self.ppl1))
 

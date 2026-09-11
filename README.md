@@ -82,12 +82,17 @@ Pack files land in `haiku/data/malecns_v1/` (gitignored). Raw feathers stay in `
 ## Run
 
 ```powershell
-python -m haiku                  # MaleCNS LIF; PAM/PPL1 write KC→MBON every tick
-python -m haiku --connectome-cpu
-python -m haiku --mb-only        # 8-channel loop only (no 166k graph)
-python -m haiku --steps 4000 --no-ui
+python -m haiku --arch malecns              # MaleCNS, 4 odor + 4 vision
+python -m haiku --arch malecns-odor         # MaleCNS, 8 odor (previous fly)
+python -m haiku --arch odor --no-ui         # 8-channel MB, odor only (previous --mb-only)
+python -m haiku --mb-only                   # same as --arch odor
+python -m haiku --arch mb --no-ui           # 8-channel MB, 4 odor + 4 vision
+python -m haiku --arch transformer --no-ui
+python -m haiku --arch transformer-odor --no-ui
 python -m haiku --poem glass
 ```
+
+Previous fly: **8 odor channels**, no `see()`. Vision fly: **4 odor + 4 vision**; `see(glyph)` is a tiny MLP, not a fly retina. Transformer arches share the same `encode` / `forward` / `code` / `stroke`.
 
 Ink snapshots and `runs/weights.npz` land in `runs/`.
 

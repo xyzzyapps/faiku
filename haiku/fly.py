@@ -28,6 +28,9 @@ class Fly(ABC):
     ) -> None:
         """One neural step. Updates `code`. Does not return a pen."""
 
+    def see(self, frame: np.ndarray) -> None:
+        """Optional visual input (glyph / ink). Default: ignore."""
+
     @property
     @abstractmethod
     def code(self) -> np.ndarray:

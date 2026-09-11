@@ -56,7 +56,75 @@ Fly            encode / forward / code     neurons only — no writing tip
 
 `infer()` talks to **`Fly`**. The glyph canvas talks to **`PenClass.stroke()`**. MaleCNS never sees a pen.
 
-### Neural network input (actual)
+### What this is (not a deep neural net)
+
+The default fly is **not** an ANN. It is not trained by backprop, has no layers, no attention, and no learned “pen head” inside the graph.
+
+It is a **connectome + LIF**: Janelia MaleCNS v1.0 wiring (who synapses on whom, with contact count and transmitter sign) integrated with Shiu leaky integrate-and-fire. That construct comes from **anatomy + a point-neuron ODE**, not from ML. Weights that change under RL are a **small tagged subset** (KC→MBON) with a Hige-style dopamine rule, plus an **8×3 matrix that is not in the fly**.
+
+| Piece | Construct | Source |
+|---|---|---|
+| MaleCNS CSR + LIF | measured graph + membrane ODE | Berg connectome, Shiu 2024 |
+| 8-channel odor MB (`--arch odor`) | cartoon of one mushroom-body motif | Hige / Aso–Rubin *shape*, not data |
+| Vision MLP | tiny trained map, glyph → 4 floats | this repo, not a retina |
+| `TransformerFly` | actual tiny ANN (attention) | this repo, **comparison only** |
+| `PenClass` 8×3 `W` | linear decoder onto paper | this repo, **not MaleCNS** |
+
+`--arch transformer` exists so you can compare an ANN with the **same sockets** (`encode` / `see` / `forward` / `code` / `stroke`) to the connectome fly. It is not a claim that the fly *is* a transformer.
+
+### Structure of the connectome fly
+
+**Graph.** 166,700 neurons, ~25.6M directed edges, packed CSR (`ptr`, `post`, `weight`). Edge weight = contact count × sign × 0.275 mV (Shiu). Sign comes from predicted transmitter (ACh +, GABA/glutamate/histamine −). Delay bin ~1.8 ms, τv 20 ms, τg 5 ms, rest −52 mV, thresh −45 mV, refractory ~2.2 ms. Every cell uses the same LIF law. There is no separate “hidden layer”: a spike at *i* adds to *post* of the CSR row.
+
+**Populations this repo actually indexes** (from cell-type strings at pack time, `tools/pack_malecns.py`):
+
+| Group | Role here |
+|---|---|
+| **KC** | Kenyon cells — odor bins. Split into **8 contiguous chunks**; mora `i` drives chunk `i % 8`. |
+| **PAM** | Appetitive dopamine (sugar). |
+| **PPL1** | Aversive dopamine (shock). |
+| **LB3c** | Sugar GRN, co-injected with PAM. |
+| **MBON** | Mushroom-body output. KC→MBON edges are the **only** synapses this repo plasticizes. |
+| **DN** | Descending neurons. Mean spike rate is a scalar bias on the **pen’s** `dx`, not a walk controller. |
+
+The rest of the 166k cells still run (they sit in the CSR). We do not inject or read them except as they happen to fire from KC/DA drive.
+
+**Mushroom-body motif (what learning uses):**
+
+```text
+          odor →  KC chunk  ──(plastic)──►  MBON
+                     ▲
+        PAM (sugar) ─┤  LTD on KC→MBON
+       PPL1 (shock) ─┘  LTP-like on KC→MBON
+```
+
+That is Hige-style **one rule on all tagged KC→MBON edges**, not a full Aso–Rubin compartment map. `code` is eight mean KC rates, not the MBON vector.
+
+**`--mb-only` structure:** 8 `kc` floats, 8 `mbon_avoid` floats, 2 DA traces. Same motif, no graph.
+
+**Channel split (this repo, not anatomy).** Two layouts, same `code` width 8:
+
+- **Odor-only (previous fly):** 8 KC odor bins, `see()` is a no-op. `--arch odor` / `--mb-only` (no graph) or `--arch malecns-odor`.
+- **Vision:** 4 odor + 4 vision. Mora `i` drives odor bin `i % 4`. `Fly.see(glyph)` runs a tiny MLP (8×8 pool → 16 → 4) into the vision bins. MaleCNS: first half of KCs odor, second half vision current. `--arch malecns` / `--arch mb`.
+
+**Transformer comparison fly.** `TransformerFly` implements the same `Fly` I/O (`encode`, `see`, `forward`, `code`) and the same `PenClass.stroke()`. Internally it is **not** MaleCNS: three tokens (odor embed, vision embed, dopamine) → one attention layer (d=16) → `code[8]`. RL is the same reward → `learn_pen` on `W` plus a three-factor nudge on `W_code` / embeddings. Run `python -m haiku --arch transformer` vs `--arch malecns` vs `--arch mb`.
+
+**Outside the network:** `PenClass` 8×3 `W` and `Stroke`. Not neurons. Both MaleCNS and the transformer share that pen.
+
+```text
+inject KC / PAM / PPL1 / LB3c
+        │
+        ▼
+  166,700 LIF  ←CSR→  spikes
+        │
+        ├─ KC eighths  →  code[8]     ← Fly
+        ├─ KC→MBON w   →  plasticity
+        └─ mean DN     →  dx bias     ─┐
+                                       ▼
+                              PenClass: tanh(code @ W) → Stroke
+```
+
+### Connectome / fly input (actual)
 
 Default run is packed **MaleCNS v1.0**: 166,700 Shiu LIF cells, ~25.6M directed edges (`haiku/lif.py`, `connectome.py`). `--mb-only` skips the graph.
 
@@ -72,7 +140,7 @@ Each `Fly.forward(dt, odor, sugar, shock)` tick, after `encode(mora_index)`:
 
 The graph does **not** take Unicode, 5–7–5, or pixels. Mora is just “which KC bin.”
 
-### Neural network output (actual)
+### Connectome / fly output (actual)
 
 MaleCNS output is a **spike index list** (who fired). In the animal you would read identified **DNs / MNs** (walk, turn, jump, proboscis). This repo does **not** expose a full motor-neuron head.
 

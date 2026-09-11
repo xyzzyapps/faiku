@@ -6,8 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .brain import HaikuBrain, N_KC
 from .env import HaikuEnv
+from .factory import make_fly
 from .generate import compose, save_weights
 
 
@@ -34,13 +34,21 @@ def train(
     backend: str = "cpu",
     ui: bool = True,
     out: Path | None = None,
+    arch: str = "malecns",
 ) -> dict:
     env = HaikuEnv(poem)
     env.reset_glyph()
-    brain = HaikuBrain(connectome=connectome, backend=backend)
-    if connectome and not brain.using_connectome:
-        raise SystemExit("haiku: MaleCNS pack missing — run python tools/pack_malecns.py")
-    brain.encode_mora(0)
+    if arch:
+        brain = make_fly(arch, backend=backend)
+    else:
+        from .brain import HaikuBrain
+
+        brain = HaikuBrain(connectome=connectome, backend=backend)
+        if connectome and not brain.using_connectome:
+            raise SystemExit("haiku: MaleCNS pack missing — run python tools/pack_malecns.py")
+    brain.encode(0)
+    if getattr(brain, "use_vision", False):
+        brain.see(env.target)
     out = out or Path("runs")
     scores: list[float] = []
     window: list[float] = []
@@ -87,7 +95,10 @@ def train(
         tk_root.update()
 
     for t in range(steps):
-        brain.encode_mora(env.i % N_KC)
+        n_odor = int(getattr(brain, "n_odor", 8))
+        brain.encode(env.i % max(1, n_odor))
+        if getattr(brain, "use_vision", False):
+            brain.see(env.target)
         brain.forward(0.016, odor=1.0, sugar=0.0, shock=0.0)
         stroke = brain.stroke()
         reward, done = env.step(stroke)
@@ -131,6 +142,7 @@ def train(
         "kc_mbon_dw": brain.kc_mbon_dw,
         "generated": " / ".join(generated),
         "weights": str(weights),
+        "arch": type(brain).__name__,
     }
 
 
@@ -140,10 +152,21 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--steps", type=int, default=2500)
     p.add_argument("--connectome", action="store_true", help="MaleCNS (default)")
     p.add_argument("--connectome-cpu", action="store_true")
-    p.add_argument("--mb-only", action="store_true", help="8-channel loop, no MaleCNS")
+    p.add_argument(
+        "--mb-only",
+        action="store_true",
+        help="previous odor-only 8-channel fly (no MaleCNS, no vision)",
+    )
+    p.add_argument(
+        "--arch",
+        default="",
+        help="malecns | malecns-odor | mb | odor | transformer | transformer-odor",
+    )
     p.add_argument("--no-ui", action="store_true")
     args = p.parse_args(argv)
-    cns = not args.mb_only
+    arch = (args.arch or "").strip().lower()
+    if not arch:
+        arch = "odor" if args.mb_only else "malecns"
     if args.connectome_cpu:
         backend = "cpu"
     else:
@@ -151,8 +174,9 @@ def main(argv: list[str] | None = None) -> None:
     info = train(
         poem=args.poem,
         steps=args.steps,
-        connectome=cns,
+        connectome=arch == "malecns",
         backend=backend,
         ui=not args.no_ui,
+        arch=arch,
     )
     print(info, flush=True)

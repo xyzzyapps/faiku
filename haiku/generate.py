@@ -55,19 +55,24 @@ def compose(brain: HaikuBrain, seed: int = 0) -> tuple[str, str, str]:
     return parts[0], parts[1], parts[2]
 
 
-def save_weights(brain: HaikuBrain, path: Path) -> None:
+def save_weights(brain, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "W": brain.W,
-        "mbon_avoid": brain.mbon_avoid,
-        "kc": brain.kc,
-        "pam": np.float32(brain.pam),
-        "ppl1": np.float32(brain.ppl1),
-        "kc_mbon_dw": np.float32(brain.kc_mbon_dw),
-        "kc_mbon_updates": np.int64(brain.kc_mbon_updates),
-        "connectome": np.int8(1 if brain.using_connectome else 0),
-        "backend": np.array(brain.lif_backend),
+        "kc": np.asarray(brain.code, dtype=np.float32),
+        "pam": np.float32(getattr(brain, "pam", 0.0)),
+        "ppl1": np.float32(getattr(brain, "ppl1", 0.0)),
+        "kc_mbon_dw": np.float32(getattr(brain, "kc_mbon_dw", 0.0)),
+        "kc_mbon_updates": np.int64(getattr(brain, "kc_mbon_updates", 0)),
+        "connectome": np.int8(1 if getattr(brain, "using_connectome", False) else 0),
+        "backend": np.array(getattr(brain, "lif_backend", "")),
+        "arch": np.array(type(brain).__name__),
     }
+    if hasattr(brain, "mbon_avoid"):
+        payload["mbon_avoid"] = brain.mbon_avoid
+    for key in ("Wq", "Wk", "Wv", "W_code", "E_odor", "E_vis", "E_da"):
+        if hasattr(brain, key):
+            payload[key] = getattr(brain, key)
     if brain.using_connectome and brain._graph is not None and brain._net is not None:
         ei = brain._graph.kc_mbon_edge.astype(np.int64)
         payload["kc_mbon_edge"] = ei.astype(np.uint32)
@@ -75,12 +80,17 @@ def save_weights(brain: HaikuBrain, path: Path) -> None:
     np.savez_compressed(path, **payload)
 
 
-def load_weights(brain: HaikuBrain, path: Path) -> None:
+def load_weights(brain, path: Path) -> None:
     z = np.load(path, allow_pickle=False)
-    brain.W[:] = z["W"]
-    brain.mbon_avoid[:] = z["mbon_avoid"]
-    if "kc" in z.files:
+    if brain.W.shape == z["W"].shape:
+        brain.W[:] = z["W"]
+    if hasattr(brain, "mbon_avoid") and "mbon_avoid" in z.files:
+        brain.mbon_avoid[:] = z["mbon_avoid"]
+    if "kc" in z.files and hasattr(brain, "kc") and getattr(brain, "kc").shape == z["kc"].shape:
         brain.kc[:] = z["kc"]
+    for key in ("Wq", "Wk", "Wv", "W_code", "E_odor", "E_vis", "E_da"):
+        if hasattr(brain, key) and key in z.files:
+            getattr(brain, key)[:] = z[key]
     brain.pam = float(z["pam"])
     brain.ppl1 = float(z["ppl1"])
     if (
