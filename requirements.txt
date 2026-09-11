@@ -1,5 +1,5 @@
 numpy>=1.26
 scipy>=1.11
-# optional: wgpu for Vulkan LIF (Holmsy)
-# optional: compression.zstd via zstandard
 zstandard>=0.22
+# pack MaleCNS: pip install pyarrow pandas
+# Vulkan LIF: pip install wgpu

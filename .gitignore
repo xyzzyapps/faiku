@@ -1,7 +1,9 @@
 .venv/
+.cache/
 __pycache__/
 *.pyc
 runs/
 *.png
-holmsy-settings.json
 .env
+haiku/data/malecns_v1/*
+!haiku/data/malecns_v1/DATA.md

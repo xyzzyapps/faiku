@@ -2,42 +2,10 @@
 from __future__ import annotations
 
 import math
-import os
-import sys
-from pathlib import Path
 
 import numpy as np
 
 N_KC = 8
-
-
-def _holmsy_root() -> Path | None:
-    """Find Holmsy/flypet without any machine-specific path.
-
-    Order: HOLMSY_ROOT, already-importable flypet, sibling folder named
-    desktop-pet next to this repo.
-    """
-    env = os.environ.get("HOLMSY_ROOT")
-    if env:
-        p = Path(env).expanduser()
-        if (p / "flypet" / "connectome.py").exists():
-            return p
-        if (p / "connectome.py").exists():
-            return p.parent
-    try:
-        import flypet
-
-        root = Path(flypet.__file__).resolve().parent.parent
-        if (root / "flypet" / "connectome.py").exists():
-            return root
-    except Exception:
-        pass
-    here = Path(__file__).resolve()
-    if len(here.parents) >= 3:
-        sibling = here.parents[2] / "desktop-pet"
-        if (sibling / "flypet" / "connectome.py").exists():
-            return sibling
-    return None
 
 
 def _exp(v: float, tau: float, dt: float) -> float:
@@ -69,21 +37,11 @@ class HaikuBrain:
             self._load_connectome(backend)
 
     def _load_connectome(self, backend: str) -> None:
-        root = _holmsy_root()
-        if root is None:
-            print("haiku: Holmsy flypet not found; MB loop only", flush=True)
-            return
-        pkg = str(root)
-        if pkg not in sys.path:
-            sys.path.insert(0, pkg)
-        try:
-            from flypet.connectome import available, load_graph
-            from flypet.lif import create_lif
-        except Exception as exc:
-            print(f"haiku: cannot import flypet ({exc})", flush=True)
-            return
+        from .connectome import available, load_graph
+        from .lif import create_lif
+
         if not available():
-            print("haiku: MaleCNS pack missing; run desktop-pet/tools/pack_malecns.py", flush=True)
+            print("haiku: MaleCNS pack missing; run python tools/pack_malecns.py", flush=True)
             return
         graph = load_graph()
         if graph is None:
