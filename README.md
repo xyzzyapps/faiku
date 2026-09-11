@@ -22,14 +22,14 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-MaleCNS (optional): pack once in Holmsy, then point here.
+MaleCNS (optional): pack the graph in a Holmsy checkout, then either put that
+checkout on `PYTHONPATH` or set `HOLMSY_ROOT` to it. If this repo sits next to
+a folder named `desktop-pet`, that sibling is used as a fallback.
 
 ```powershell
-cd ..\desktop-pet
-python tools\pack_malecns.py
+python tools\pack_malecns.py   # from a Holmsy tree
+$env:HOLMSY_ROOT = "<path-to-holmsy>"
 ```
-
-`haiku` looks for `../desktop-pet/flypet` on `PYTHONPATH` (or `HOLMSY_ROOT`).
 
 ## Run
 

@@ -12,20 +12,31 @@ N_KC = 8
 
 
 def _holmsy_root() -> Path | None:
+    """Find Holmsy/flypet without any machine-specific path.
+
+    Order: HOLMSY_ROOT, already-importable flypet, sibling folder named
+    desktop-pet next to this repo.
+    """
     env = os.environ.get("HOLMSY_ROOT")
     if env:
-        p = Path(env)
+        p = Path(env).expanduser()
         if (p / "flypet" / "connectome.py").exists():
             return p
         if (p / "connectome.py").exists():
             return p.parent
+    try:
+        import flypet
+
+        root = Path(flypet.__file__).resolve().parent.parent
+        if (root / "flypet" / "connectome.py").exists():
+            return root
+    except Exception:
+        pass
     here = Path(__file__).resolve()
-    for cand in (
-        here.parents[2] / "desktop-pet",
-        Path(r"C:\Users\manic\Documents\PROG\fly\desktop-pet"),
-    ):
-        if (cand / "flypet" / "connectome.py").exists():
-            return cand
+    if len(here.parents) >= 3:
+        sibling = here.parents[2] / "desktop-pet"
+        if (sibling / "flypet" / "connectome.py").exists():
+            return sibling
     return None
 
 
